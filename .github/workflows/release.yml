@@ -1,0 +1,68 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch_label: x64
+            msbuild_platform: x64
+            package_arch: x64
+          - arch_label: x86
+            msbuild_platform: Win32
+            package_arch: x86
+          - arch_label: ARM
+            msbuild_platform: ARM64
+            package_arch: arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore Codex_AccountSwitch\Codex_AccountSwitch.vcxproj -PackagesDirectory packages
+
+      - name: Build Release (${{ matrix.arch_label }})
+        run: msbuild Codex_AccountSwitch\Codex_AccountSwitch.vcxproj /p:Configuration=Release /p:Platform=${{ matrix.msbuild_platform }} /p:PlatformToolset=v143 /m
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        shell: powershell
+        run: .\installer\build_installer.ps1 -IsccPath "iscc" -TargetPlatform "windows" -TargetArchitecture "${{ matrix.package_arch }}"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          files: |
+            dist/Codex_AccountSwitch_Setup_windows_${{ matrix.package_arch }}_*.exe
+            dist/Codex_AccountSwitch_Portable_windows_${{ matrix.package_arch }}_*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
